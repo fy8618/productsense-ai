@@ -24,10 +24,10 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Please paste customer feedback before running AI analysis." }, { status: 400 });
     }
 
-    const provider = (process.env.AI_PROVIDER || "openai").toLowerCase();
-    const apiKey = process.env.AI_API_KEY;
-    const model = process.env.AI_MODEL;
-    const baseUrl = process.env.AI_BASE_URL;
+    const provider = (process.env.AI_PROVIDER || "openai").trim().toLowerCase();
+    const apiKey = process.env.AI_API_KEY?.trim();
+    const model = process.env.AI_MODEL?.trim();
+    const baseUrl = process.env.AI_BASE_URL?.trim();
 
     const missing = [
       !apiKey ? "AI_API_KEY is missing. Add it to D:\\ProductSenseAI\\.env.local." : "",
@@ -63,23 +63,71 @@ export async function POST(request: Request) {
       };
     }
 
-    const endpoint = `${baseUrl!.replace(/\/+$/, "")}/chat/completions`;
-    const providerResponse = await fetch(endpoint, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`
-      },
-      body: JSON.stringify(requestBody)
-    });
+    const normalizedBaseUrl = baseUrl!.replace(/\/+$/, "");
+    const endpoint = `${normalizedBaseUrl}/chat/completions`;
+    let providerResponse: Response;
+
+    try {
+      providerResponse = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`
+        },
+        body: JSON.stringify(requestBody)
+      });
+    } catch (error) {
+      const details = createSafeProviderDetails({
+        provider,
+        model: model!,
+        baseUrl: normalizedBaseUrl,
+        endpoint,
+        apiKey,
+        providerStatus: null,
+        providerErrorCode: null,
+        providerErrorMessage: error instanceof Error ? error.message : "Provider request failed before receiving a response.",
+        responseText: "",
+        jsonParsingError: null
+      });
+
+      logProviderFailure("Provider request could not be completed", details);
+
+      return NextResponse.json(
+        {
+          error: getFriendlyProviderMessage(provider, 503, false),
+          errorType: "provider_temporary",
+          developerDetails: details
+        },
+        { status: 503 }
+      );
+    }
 
     const responseText = await providerResponse.text();
     const providerData = parseProviderEnvelope(responseText);
 
     if (!providerData.ok) {
+      const details = createSafeProviderDetails({
+        provider,
+        model: model!,
+        baseUrl: normalizedBaseUrl,
+        endpoint,
+        apiKey,
+        providerStatus: providerResponse.status,
+        providerErrorCode: null,
+        providerErrorMessage: null,
+        responseText,
+        jsonParsingError: providerData.error
+      });
+
+      logProviderFailure("Provider returned a non-JSON response", details);
+
       return NextResponse.json(
-        { error: `${provider} returned invalid JSON. Check AI_BASE_URL and provider compatibility.` },
-        { status: 502 }
+        {
+          error: getFriendlyProviderMessage(provider, providerResponse.status, false),
+          errorType: isTemporaryProviderStatus(providerResponse.status) ? "provider_temporary" : "provider_error",
+          developerDetails: details
+        },
+        { status: providerResponse.ok ? 502 : providerResponse.status }
       );
     }
 
@@ -90,11 +138,30 @@ export async function POST(request: Request) {
         providerResponse.status === 402 ||
         providerResponse.status === 429 ||
         /quota|billing|credit|insufficient|resource_exhausted/i.test(`${errorCode} ${errorMessage}`);
+      const details = createSafeProviderDetails({
+        provider,
+        model: model!,
+        baseUrl: normalizedBaseUrl,
+        endpoint,
+        apiKey,
+        providerStatus: providerResponse.status,
+        providerErrorCode: errorCode || null,
+        providerErrorMessage: errorMessage,
+        responseText,
+        jsonParsingError: null
+      });
+
+      logProviderFailure("Provider returned an HTTP error", details);
 
       return NextResponse.json(
         {
-          error: errorMessage,
-          errorType: isQuotaOrBillingError ? "quota_or_billing" : "provider_error"
+          error: getFriendlyProviderMessage(provider, providerResponse.status, isQuotaOrBillingError),
+          errorType: isQuotaOrBillingError
+            ? "quota_or_billing"
+            : isTemporaryProviderStatus(providerResponse.status)
+              ? "provider_temporary"
+              : "provider_error",
+          developerDetails: details
         },
         { status: providerResponse.status }
       );
@@ -103,22 +170,60 @@ export async function POST(request: Request) {
     const content = getAssistantContent(providerData.value);
 
     if (!content) {
+      const details = createSafeProviderDetails({
+        provider,
+        model: model!,
+        baseUrl: normalizedBaseUrl,
+        endpoint,
+        apiKey,
+        providerStatus: providerResponse.status,
+        providerErrorCode: null,
+        providerErrorMessage: "The response did not contain choices[0].message.content.",
+        responseText,
+        jsonParsingError: null
+      });
+
+      logProviderFailure("Provider returned an unexpected response shape", details);
+
       return NextResponse.json(
-        { error: `${provider} returned an unexpected Chat Completions response shape.` },
+        {
+          error: `${provider} returned an unexpected response. Check Vercel Logs or use the demo result.`,
+          errorType: "provider_error",
+          developerDetails: details
+        },
         { status: 502 }
       );
     }
 
-    const analysis = parseAnalysisJson(content);
+    const analysisResult = parseAnalysisJson(content);
 
-    if (!analysis) {
+    if (!analysisResult.ok) {
+      const details = createSafeProviderDetails({
+        provider,
+        model: model!,
+        baseUrl: normalizedBaseUrl,
+        endpoint,
+        apiKey,
+        providerStatus: providerResponse.status,
+        providerErrorCode: null,
+        providerErrorMessage: "The assistant response did not match the ProductSense AI analysis shape.",
+        responseText,
+        jsonParsingError: analysisResult.error
+      });
+
+      logProviderFailure("Provider returned invalid analysis JSON", details);
+
       return NextResponse.json(
-        { error: `${provider} returned invalid JSON for the ProductSense AI analysis shape.` },
+        {
+          error: `${provider} returned an invalid structured response. Check Vercel Logs or use the demo result.`,
+          errorType: "provider_error",
+          developerDetails: details
+        },
         { status: 502 }
       );
     }
 
-    return NextResponse.json(analysis);
+    return NextResponse.json(analysisResult.value);
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Unexpected server error while analyzing feedback." },
@@ -127,11 +232,11 @@ export async function POST(request: Request) {
   }
 }
 
-function parseProviderEnvelope(text: string): { ok: true; value: unknown } | { ok: false } {
+function parseProviderEnvelope(text: string): { ok: true; value: unknown } | { ok: false; error: string } {
   try {
     return { ok: true, value: JSON.parse(text) };
-  } catch {
-    return { ok: false };
+  } catch (error) {
+    return { ok: false, error: getErrorMessage(error) };
   }
 }
 
@@ -157,7 +262,7 @@ function getProviderErrorCode(data: unknown) {
   return "";
 }
 
-function parseAnalysisJson(content: string): AiAnalysisResult | null {
+function parseAnalysisJson(content: string): { ok: true; value: AiAnalysisResult } | { ok: false; error: string } {
   const normalized = content
     .trim()
     .replace(/^```(?:json)?\s*/i, "")
@@ -166,14 +271,112 @@ function parseAnalysisJson(content: string): AiAnalysisResult | null {
   const firstBrace = normalized.indexOf("{");
   const lastBrace = normalized.lastIndexOf("}");
 
-  if (firstBrace < 0 || lastBrace <= firstBrace) return null;
+  if (firstBrace < 0 || lastBrace <= firstBrace) {
+    return { ok: false, error: "No complete JSON object was found in the assistant response." };
+  }
 
   try {
     const parsed = JSON.parse(normalized.slice(firstBrace, lastBrace + 1));
-    return isAiAnalysisResult(parsed) ? parsed : null;
-  } catch {
-    return null;
+    return isAiAnalysisResult(parsed)
+      ? { ok: true, value: parsed }
+      : { ok: false, error: "JSON parsed successfully but did not match the required analysis schema." };
+  } catch (error) {
+    return { ok: false, error: getErrorMessage(error) };
   }
+}
+
+type SafeProviderDetails = {
+  provider: string;
+  model: string;
+  baseUrl: string;
+  requestUrl: string;
+  aiApiKeyExists: boolean;
+  providerHttpStatus: number | null;
+  providerErrorCode: string | null;
+  providerErrorMessage: string | null;
+  rawProviderResponseText: string;
+  jsonParsingError: string | null;
+};
+
+function createSafeProviderDetails(input: {
+  provider: string;
+  model: string;
+  baseUrl: string;
+  endpoint: string;
+  apiKey?: string;
+  providerStatus: number | null;
+  providerErrorCode: string | null;
+  providerErrorMessage: string | null;
+  responseText: string;
+  jsonParsingError: string | null;
+}): SafeProviderDetails {
+  return {
+    provider: input.provider,
+    model: input.model,
+    baseUrl: sanitizeUrl(input.baseUrl, input.apiKey),
+    requestUrl: sanitizeUrl(input.endpoint, input.apiKey),
+    aiApiKeyExists: Boolean(input.apiKey),
+    providerHttpStatus: input.providerStatus,
+    providerErrorCode: sanitizeOptionalText(input.providerErrorCode, input.apiKey),
+    providerErrorMessage: sanitizeOptionalText(input.providerErrorMessage, input.apiKey),
+    rawProviderResponseText: redactSecrets(input.responseText, input.apiKey).slice(0, 1000),
+    jsonParsingError: sanitizeOptionalText(input.jsonParsingError, input.apiKey)
+  };
+}
+
+function logProviderFailure(reason: string, details: SafeProviderDetails) {
+  console.error(`[analyze-feedback] ${reason}`, details);
+}
+
+function getFriendlyProviderMessage(provider: string, status: number, isQuotaOrBillingError: boolean) {
+  if (isQuotaOrBillingError || status === 429) {
+    return `${provider} could not complete the analysis because of quota, billing, or rate limits. Try again later or use the demo result.`;
+  }
+
+  if (isTemporaryProviderStatus(status)) {
+    return `${provider} is temporarily unavailable. This may be a provider rate-limit or availability issue. Try again later or use the demo result.`;
+  }
+
+  return `${provider} could not complete the analysis. Check the safe developer details in Vercel Logs or use the demo result.`;
+}
+
+function isTemporaryProviderStatus(status: number) {
+  return [429, 500, 502, 503, 504].includes(status);
+}
+
+function sanitizeUrl(value: string, apiKey?: string) {
+  try {
+    const url = new URL(value);
+    url.username = "";
+    url.password = "";
+
+    for (const key of Array.from(url.searchParams.keys())) {
+      if (/key|token|secret|auth/i.test(key)) url.searchParams.set(key, "[REDACTED]");
+    }
+
+    return redactSecrets(url.toString(), apiKey).replace(/\/$/, "");
+  } catch {
+    return redactSecrets(value, apiKey);
+  }
+}
+
+function sanitizeOptionalText(value: string | null, apiKey?: string) {
+  return value ? redactSecrets(value, apiKey) : null;
+}
+
+function redactSecrets(value: string, apiKey?: string) {
+  let sanitized = value;
+
+  if (apiKey) sanitized = sanitized.split(apiKey).join("[REDACTED]");
+
+  return sanitized
+    .replace(/Bearer\s+[^\s"']+/gi, "Bearer [REDACTED]")
+    .replace(/\b(?:sk-[A-Za-z0-9_-]{8,}|AIza[A-Za-z0-9_-]{20,})\b/g, "[REDACTED]")
+    .replace(/((?:api[_-]?key|authorization|token|secret)["']?\s*[:=]\s*["']?)[^"',\s}]+/gi, "$1[REDACTED]");
+}
+
+function getErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : "Unknown JSON parsing error.";
 }
 
 function isAiAnalysisResult(value: unknown): value is AiAnalysisResult {
