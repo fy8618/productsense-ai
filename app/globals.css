@@ -1,0 +1,29 @@
+﻿@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color: #16211f;
+  background: #f6f3ec;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  color: #16211f;
+  background: linear-gradient(180deg, #f6f3ec 0%, #ffffff 52%, #eef5f2 100%);
+  min-height: 100vh;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+::selection {
+  background: #d4a83f;
+  color: #16211f;
+}
