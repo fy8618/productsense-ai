@@ -11,10 +11,44 @@ export default function DashboardPage() {
   const { language, t } = useLanguage();
   const { opportunities, painClusters } = getMockData(language);
   const workflowSteps = [t("dashboard.raw"), t("dashboard.clusters"), t("dashboard.evidence"), t("dashboard.opportunities")];
+  const demoWorkflowLinks = [
+    { title: t("dashboard.demoUpload"), description: t("dashboard.demoUploadDescription"), href: "/upload", isCurrent: false },
+    { title: t("dashboard.demoDashboard"), description: t("dashboard.demoDashboardDescription"), href: "/dashboard", isCurrent: true },
+    { title: t("dashboard.demoOpportunity"), description: t("dashboard.demoOpportunityDescription"), href: "/opportunities/checkout-friction", isCurrent: false },
+    { title: t("dashboard.demoPrd"), description: t("dashboard.demoPrdDescription"), href: "/prd/checkout-friction", isCurrent: false },
+    { title: t("dashboard.demoEvaluation"), description: t("dashboard.demoEvaluationDescription"), href: "/evaluation/checkout-friction", isCurrent: false }
+  ];
 
   return (
     <AppShell>
       <SectionHeader eyebrow={t("dashboard.eyebrow")} title={t("dashboard.title")} description={t("dashboard.description")} />
+      <div className="mb-6 rounded border border-tide/20 bg-tide/10 p-4 text-sm font-semibold leading-6 text-ink/75">{t("dashboard.banner")}</div>
+      <section className="mb-6 rounded border border-ink/10 bg-white p-5 shadow-soft">
+        <h2 className="text-lg font-bold">{t("dashboard.demoEntryTitle")}</h2>
+        <p className="mt-2 text-sm leading-6 text-ink/65">{t("dashboard.demoEntryHelp")}</p>
+        <div className="mt-4 rounded bg-field px-4 py-3 text-sm font-semibold text-ink/70">{t("dashboard.demoFlow")}</div>
+        <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+          {demoWorkflowLinks.map((item, index) => {
+            const content = (
+              <>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-xs font-bold text-clay">{index + 1}</span>
+                  {item.isCurrent && <span className="rounded bg-ink/60 px-2 py-1 text-xs font-bold text-white">{t("dashboard.currentPage")}</span>}
+                </div>
+                <h3 className="mt-3 font-bold">{item.title}</h3>
+                <p className="mt-2 text-sm leading-6 text-ink/65">{item.description}</p>
+              </>
+            );
+
+            if (item.isCurrent) {
+              return <article key={item.href} className="cursor-default rounded border border-ink/10 bg-field p-4 opacity-80">{content}</article>;
+            }
+
+            return <Link key={item.href} href={item.href} className="rounded border border-ink/10 p-4 transition hover:border-moss hover:bg-field">{content}</Link>;
+          })}
+        </div>
+        <p className="mt-4 text-sm leading-6 text-ink/65">{t("dashboard.demoHint")}</p>
+      </section>
       <section className="mb-6 rounded border border-ink/10 bg-white p-5 shadow-soft">
         <h2 className="text-lg font-bold">{t("dashboard.workflow")}</h2>
         <div className="mt-4 grid gap-3 md:grid-cols-4">{workflowSteps.map((step) => <div key={step} className="rounded bg-field p-4 text-sm font-semibold text-ink/75">{step}</div>)}</div>

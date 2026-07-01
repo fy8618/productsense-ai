@@ -4,14 +4,11 @@ import Link from "next/link";
 import { useLanguage } from "@/components/LanguageProvider";
 
 const steps = [
-  { labelKey: "nav.upload", href: "/upload" },
-  { labelKey: "nav.dashboard", href: "/dashboard" },
-  { labelKey: "nav.prioritize", href: "/opportunities/checkout-friction" },
-  { labelKey: "nav.draft", href: "/prd" },
-  { labelKey: "nav.evaluate", href: "/evaluation" },
+  { labelKey: "nav.home", href: "/" },
   { labelKey: "nav.aiAnalysis", href: "/ai-analysis" },
   { labelKey: "nav.aiPrd", href: "/ai-prd" },
-  { labelKey: "nav.aiEvaluation", href: "/ai-evaluation" }
+  { labelKey: "nav.aiEvaluation", href: "/ai-evaluation" },
+  { labelKey: "nav.demoFlow", href: "/upload" }
 ];
 
 export function AppShell({ children }: { children: React.ReactNode }) {
